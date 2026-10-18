@@ -31,3 +31,8 @@ superset-home/
 .DS_Store
 .idea/
 .vscode/
+
+# Terraform state may contain secrets
+*.tfstate
+*.tfstate.*
+__pycache__/

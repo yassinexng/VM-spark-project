@@ -1,8 +1,0 @@
-
-# Terraform state may contain secrets
-*.tfstate
-*.tfstate.*
-
-# Terraform state may contain secrets
-*.tfstate
-*.tfstate.*
