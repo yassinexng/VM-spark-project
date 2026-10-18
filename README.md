@@ -240,4 +240,3 @@ Once connected, create datasets from `v_file1`, `v_file2`, and `v_file3` to buil
   - Docker Compose configuration validates cleanly and starts Superset on port `8422`.
   - All three raw CSV datasets generated (exactly 1,000,001 rows each).
 - **Needs Active Cloud Credentials:** Cloud upload to Azure Blob, remote SCP transfer over Tailscale, and live SQL view queries require active credentials in `.env`.
-- **In Progress:** Authoring final dashboard visualizations in Apache Superset.
