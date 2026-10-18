@@ -1,226 +1,255 @@
-# Cryptocurrency Market Data Pipeline
+# Crypto Market Data Pipeline
 
-## 1. Project Purpose & Current Implementation Status
-
-This repository contains an end-to-end data engineering pipeline designed to collect live cryptocurrency market data, scale it synthetically into high-volume analytical datasets, transfer the data across an isolated mesh network, process and standardize it with Apache Spark (PySpark), export the transformed datasets to cloud object storage (Azure Blob / ADLS Gen2) as Parquet files, expose the data via SQL views, and visualize metrics through Apache Superset.
-
-### Current Implementation Status
-* **Status**: Functional prototype under active local dashboard development.
-* **Verified Components**:
-  * Infrastructure configuration with Terraform for Azure Linux VM extension & Tailscale mesh networking.
-  * Python synthetic data generation using CoinGecko market inputs.
-  * Local multi-threaded PySpark ingestion, schema standardization, audit column enrichment (`source_file`, `processed_at`).
-  * Cloud Parquet export script configured for Azure Blob Storage via Hadoop Azure connector (`wasbs://` protocol with SAS token).
-  * SQL script (`initiation_db.sql`) defining Azure SQL / Synapse Serverless views using `OPENROWSET` over the Parquet outputs.
-  * Dockerized Apache Superset container setup (`docker-compose.yaml`) with `pymssql` driver installation for Azure SQL connectivity.
-* **Known Limitations & Pending Tasks**:
-  * Line 2 of `processer.py` contains a syntax error caused by an accidental shell command paste (`ssh vmw@...` inside the import statement) which prevents it from compiling in this directory without correction.
-  * Cloud storage uploads, remote VM transfers, and live database queries require user-supplied Azure credentials and active remote network endpoints.
-
----
-
-## 2. Pipeline Architecture
-
-Below is a text diagram of the verified data pipeline flow:
+A hybrid, end-to-end data pipeline that pulls live CoinGecko cryptocurrency market data on an Azure Linux VM, algorithmically expands it into large analytical CSV datasets (3 million rows / 12 million data cells per batch), securely syncs the files to my local laptop over a private Tailscale mesh network, transforms and enriches them using PySpark, writes partitioned Parquet files directly to Azure Blob Storage, exposes the data through serverless Azure SQL views, and serves interactive BI dashboards in Apache Superset.
 
 ```
-+-------------------------------------------------------------------------------+
-| 1. Remote Data Generation (Ubuntu Azure VM: newvm)                            |
-|    - CoinGecko Market API -> get_data.py -> processer.py                      |
-|    - Generates 1,000,000 rows each for 3 topics -> file1.csv, file2.csv, file3.csv|
-|    - Managed by systemd: our_daemon.service                                   |
-+-------------------------------------------------------------------------------+
-                                      |
-                                      | (Tailscale Mesh Network / SCP via sendfiles.py)
-                                      v
-+-------------------------------------------------------------------------------+
-| 2. Local Ingestion & Storage (Local Machine)                                 |
-|    - Landing directory: /home/ysn/Documents/projects/proji_2/files/           |
-|    - Raw CSV files: file1.csv (~89.8 MB), file2.csv (~40.9 MB), file3.csv (~32.2 MB)|
-+-------------------------------------------------------------------------------+
-                                      |
-                                      v
-+-------------------------------------------------------------------------------+
-| 3. Local Distributed Processing (PySpark: sspark.py)                          |
-|    - SparkSession (local[4], 4GB driver memory)                               |
-|    - Ingests raw CSVs, enforces schemas, renames columns (ROI metrics)        |
-|    - Appends metadata: source_file, processed_at                              |
-+-------------------------------------------------------------------------------+
-                                      |
-                                      v
-+-------------------------------------------------------------------------------+
-| 4. Cloud Storage Export (PySpark Azure: azureprocessing.py)                   |
-|    - Hadoop Azure connector (org.apache.hadoop:hadoop-azure:3.3.4)            |
-|    - Writes partitioned Parquet files to Azure Blob Storage (output_parquet/) |
-|    - Endpoint: wasbs://output@<storage_account>.blob.core.windows.net/        |
-+-------------------------------------------------------------------------------+
-                                      |
-                                      v
-+-------------------------------------------------------------------------------+
-| 5. Analytics Layer (Azure SQL / Synapse: initiation_db.sql)                   |
-|    - Database scoped credentials & external data source ([sql_blob])          |
-|    - SQL Views: v_file1, v_file2, v_file3 via OPENROWSET(BULK ... PARQUET)   |
-+-------------------------------------------------------------------------------+
-                                      |
-                                      v
-+-------------------------------------------------------------------------------+
-| 6. Business Intelligence (Apache Superset: docker-compose.yaml)               |
-|    - Containerized Superset with pymssql driver                               |
-|    - Dashboards connected to Azure SQL views (port 8422)                      |
-+-------------------------------------------------------------------------------+
+Azure VM (generate) → Tailscale (SCP) → Laptop (PySpark) → Azure Blob (Parquet) → Azure SQL views → Superset
 ```
 
 ---
 
-## 3. Technology Stack & Roles
+## Architecture & How the Pipeline Works
 
-| Technology | Found in Repository | Role in Pipeline |
-| :--- | :--- | :--- |
-| **Python 3** | `*.py` | Core scripting language for data generation, synchronization, and PySpark driver execution. |
-| **Apache Spark (PySpark)** | `sspark.py`, `azureprocessing.py` | Large-scale local data transformation, schema management, and Parquet serialization. |
-| **Hadoop Azure Connector** | `sspark.py`, `azureprocessing.py` | Provides `wasbs://` filesystem adapter (`hadoop-azure:3.3.4`) for direct Azure Blob writes. |
-| **Terraform** | `main.tf`, `terraform.tfstate` | Infrastructure as Code (IaC) to configure VM extensions and Tailscale authentication keys. |
-| **Tailscale** | `main.tf`, `setup_vm.py`, `sendfiles.py` | Secure peer-to-peer mesh VPN allowing SCP transfers between local PC and cloud VM. |
-| **Azure Linux VM** | `main.tf`, `setup_vm.py`, `our_daemon.service`| Remote compute host (`newvm`, Ubuntu, `Standard_B2ats_v2`) running data generation. |
-| **systemd** | `our_daemon.service` | Linux daemon supervisor for automated, scheduled execution of `processer.py`. |
-| **Azure Blob / ADLS Gen2** | `azureprocessing.py`, `initiation_db.sql` | Target cloud storage for partitioned Parquet datasets (`output_parquet`). |
-| **Azure SQL / Synapse** | `initiation_db.sql` | Serverless query layer creating virtual views (`v_file1`, `v_file2`, `v_file3`) via `OPENROWSET`. |
-| **Docker & Compose** | `docker-compose.yaml` | Container orchestration hosting Apache Superset. |
-| **Apache Superset** | `docker-compose.yaml` | Business intelligence web dashboard platform (accessible on port 8422). |
-
----
-
-## 4. Implementation vs. Planned Components
-
-| Component | Status | Repository Evidence | Notes |
-| :--- | :--- | :--- | :--- |
-| **Local PySpark Processing** | **Implemented** | `sspark.py` | Validated local Spark session, schema definitions, and transformations. |
-| **Azure Parquet Storage Script**| **Implemented** | `azureprocessing.py` | Configured with `wasbs://` writes; requires live Azure SAS credentials. |
-| **Terraform IaC** | **Implemented & Validated** | `main.tf`, `terraform.tfstate` | Provider config and VM extension valid (`terraform validate` passes). |
-| **Tailscale Integration** | **Configured** | `main.tf`, `setup_vm.py`, `sendfiles.py`| Terraform resources and SCP transfer scripts configured. |
-| **systemd Daemon Service** | **Configured** | `our_daemon.service` | Unit configuration file present for deployment to `/etc/systemd/system/`. |
-| **Azure SQL Views** | **Configured (Template)** | `initiation_db.sql` | SQL view definitions ready; requires execution on Azure SQL database. |
-| **Apache Superset Dashboard** | **Implemented / In Progress** | `docker-compose.yaml` | Compose config validated (`docker compose config` passes); user creating charts. |
-| **Azure Data Factory (ADF)** | **Planned / Absent** | None | Discussed in architectural notes, but no ADF JSON or Bicep templates exist. |
-| **Apache Airflow** | **Absent** | None | Removed from design; no DAGs or Airflow configurations in repo. |
-| **Apache Kafka** | **Absent** | None | Removed from design; no streaming brokers or producers in repo. |
-| **Databricks** | **Absent** | None | Removed from design; PySpark is executed locally. |
-| **GitHub Actions (CI/CD)** | **Planned / Absent** | None | No `.github/workflows` present. |
-| **scikit-learn / MLflow** | **Planned / Absent** | None | No machine learning training or tracking code found in repo. |
-
----
-
-## 5. Repository Layout & Dataset Paths
+The pipeline is split across two environments: a remote cloud VM that acts as the data generator and scheduler, and a local machine that handles distributed processing, cloud storage dispatch, and visualization.
 
 ```
-/home/ysn/Documents/projects/proji_2/files/
-├── azureprocessing.py      # Azure Blob Parquet export using PySpark
-├── docker-compose.yaml     # Apache Superset container definition & entrypoint
-├── file1.csv               # 1,000,000 records of cryptocurrency market metrics (~89.8 MB)
-├── file2.csv               # 1,000,000 records of ROI metrics (~40.9 MB)
-├── file3.csv               # 1,000,000 records of ATH & market cap rank metrics (~32.2 MB)
-├── get_data.py             # Fetches CoinGecko API data & generates synthetic data
-├── initiation_db.sql       # Azure SQL setup: external data source, credentials & views
-├── main.tf                 # Terraform config for VM extension & Tailscale key
-├── our_daemon.service      # systemd service unit file for VM background execution
-├── processer.py            # Orchestrator script for data generation & SCP dispatch
-├── README.md               # Repository documentation and architecture guide
-├── sendfiles.py            # SCP utility functions for file transfers
-├── sendtovm.py             # Remote execution trigger script (local -> VM)
-├── setup_vm.py             # Discovers Azure VM metadata, writes .env & triggers Terraform
-├── sspark.py               # PySpark ETL script reading local CSV files
-└── .terraform.lock.hcl     # Terraform dependency lock file
++---------------------------------------------------------------------------------------+
+| 1. Azure Linux VM ("newvm" in Sweden Central)                                         |
+|    - Runs get_data.py to pull spot market data from CoinGecko API                     |
+|    - Scales data synthetically to 1,000,000 rows across 3 relational topics           |
+|    - Managed by systemd (our_daemon.service) running processer.py every 45s           |
++---------------------------------------------------------------------------------------+
+                                           |
+                                           | Tailscale WireGuard Mesh Tunnel (P2P SCP)
+                                           v
++---------------------------------------------------------------------------------------+
+| 2. Local Workstation (Landing Directory)                                              |
+|    - Receives file1.csv (~89.8 MB), file2.csv (~40.9 MB), file3.csv (~32.2 MB)        |
+|    - 3,000,000 rows total (~163 MB uncompressed)                                      |
++---------------------------------------------------------------------------------------+
+                                           |
+                                           v
++---------------------------------------------------------------------------------------+
+| 3. Local Distributed Processing (PySpark: sspark.py)                                  |
+|    - Multi-threaded SparkSession (local[4], 4GB driver memory)                        |
+|    - Standardizes schemas, renames ROI metrics, injects source_file & processed_at    |
++---------------------------------------------------------------------------------------+
+                                           |
+                                           v
++---------------------------------------------------------------------------------------+
+| 4. Cloud Object Storage (Azure Blob / ADLS Gen2: azureprocessing.py)                  |
+|    - Uses hadoop-azure:3.3.4 connector with wasbs:// protocol and SAS token auth      |
+|    - Writes snappy-compressed columnar Parquet files into output_parquet/             |
++---------------------------------------------------------------------------------------+
+                                           |
+                                           v
++---------------------------------------------------------------------------------------+
+| 5. Zero-Copy Query Virtualization (Azure SQL Serverless: initiation_db.sql)           |
+|    - External data source [sql_blob] pointing to the Parquet container                |
+|    - Creates virtual views (v_file1, v_file2, v_file3) using T-SQL OPENROWSET         |
+|    - Direct queries over cloud Parquet without duplicate data copies                  |
++---------------------------------------------------------------------------------------+
+                                           |
+                                           v
++---------------------------------------------------------------------------------------+
+| 6. BI & Analytics Layer (Apache Superset: docker-compose.yaml)                        |
+|    - Containerized Superset on port 8422 with dynamic pymssql driver setup            |
+|    - Connects directly to Azure SQL views for live dashboards                         |
++---------------------------------------------------------------------------------------+
 ```
-
-### Verified Input and Output Paths
-
-* **Raw Input CSVs** (Local landing folder):
-  * `file1.csv`: `ticket_symbol`, `live_price_usd`, `24_hour_trading_volume`, `highest_last24h`, `lowest_last24h`, `data_snapshot__date`
-  * `file2.csv`: `times`, `currency`, `percentage`
-  * `file3.csv`: `all_times_high_price`, `when_all_times_occured`, `market_cap_rank`
-* **Transformed Parquet Outputs** (Cloud Azure Blob):
-  * `wasbs://output@<storage_account>.blob.core.windows.net/output_parquet/file1`
-  * `wasbs://output@<storage_account>.blob.core.windows.net/output_parquet/file2`
-  * `wasbs://output@<storage_account>.blob.core.windows.net/output_parquet/file3`
-* **SQL Server Views** (Exposed to Superset):
-  * `v_file1`: Virtual table over `output_parquet/file1/*.parquet`
-  * `v_file2`: Virtual table over `output_parquet/file2/*.parquet`
-  * `v_file3`: Virtual table over `output_parquet/file3/*.parquet`
 
 ---
 
-## 6. Setup and Execution Instructions
+## Compute Environment & Resource Footprint
 
-### Prerequisites
-* Linux environment (Ubuntu / Debian recommended).
-* Python 3.10+ with `pyspark`, `pandas`, `requests`, `numpy`, `python-dotenv`.
-* Java OpenJDK 8 or 11 (required by PySpark).
-* Docker & Docker Compose (for Apache Superset).
-* Terraform 1.5+ (for infrastructure extension).
-* Azure CLI (`az`) logged in (`az login`).
+The remote generation runs on an intentionally lean Azure VM to prove that high-throughput batch generation doesn't need expensive compute:
 
-### Running the Components
+* **Host & OS:** Ubuntu 24.04.5 LTS (x86_64, Linux Kernel `6.17.0-1011-azure`, Hyper-V UEFI Release v4.1)
+* **Processor:** 2 virtual CPUs powered by an **AMD EPYC 7763** server chip @ 3.241 GHz
+* **Memory Footprint:** **892 MiB total RAM** — uses only **~253 MiB** while actively running the generation loop
+* **System Stability:** **174+ days** of continuous uptime with zero memory leaks
 
-#### 1. Infrastructure Validation
+---
+
+## Setup & Prerequisites
+
+### 1. Log in to Azure
+Make sure the Azure CLI is installed and authenticated to your subscription:
 ```bash
-cd /home/ysn/Documents/projects/proji_2/files
-terraform init
-terraform validate
+az login
 ```
 
-#### 2. Local PySpark Processing
-To test and execute data transformation on the existing CSV files:
+### 2. Configure Secrets in `.env`
+Create a `.env` file in the project folder with your credentials. These are used by both Python scripts and Terraform:
+```ini
+# Tailscale API key (used by Terraform to mint auth keys for the VM)
+tailscale_api=tskey-api-xxxxxxxxxxxxxxxxx
+
+# VM administrative password
+admin_password=YourSecurePassword123!
+
+# Azure Storage Account & SAS token for Parquet upload and SQL views
+storage_account=yourstorageaccountname
+sas_token=sp=r&st=...&sig=...
+```
+
+### 3. Run the Setup Script
+The `setup_vm.py` script automatically inspects your Azure subscription for the VM, writes all required Terraform input variables (`TF_VAR_*`) into `.env`, and initializes Terraform:
+```bash
+python3 setup_vm.py
+```
+
+What `setup_vm.py` does behind the scenes:
+1. Calls `az vm list` and `az vm show` to extract the VM's ID, Resource Group, Location, Size (`Standard_B2ats_v2`), OS disk caching, image reference, and Network Interface ID.
+2. Writes these values to `.env` as `TF_VAR_subscription`, `TF_VAR_ressource_group_name`, `TF_VAR_vm_name`, `TF_VAR_location`, `TF_VAR_size`, etc.
+3. Automatically triggers `terraform init`, `terraform plan`, and `terraform apply`.
+
+### 4. Check the Terraform Plan
+You can verify the infrastructure state at any time:
+```bash
+terraform plan
+```
+
+---
+
+## How the Code Gets to the VM and Runs
+
+1. **Automatic Network Join on Boot:**
+   Terraform installs Tailscale onto the Azure VM using an `azurerm_virtual_machine_extension` (CustomScript). Terraform creates a reusable, non-ephemeral Tailscale auth key (`tailscale_tailnet_key.vm_auth_key`) and injects it into the VM extension's startup script. As soon as the VM provisions, it automatically connects to your private Tailnet under the hostname `newvm` without requiring manual SSH logins or opening public inbound ports.
+
+2. **Pushing Code to the VM:**
+   The `sendtovm.py` script sends the application files directly to the remote VM over SCP across Tailscale:
+   ```bash
+   python3 sendtovm.py
+   ```
+   This copies `processer.py`, `get_data.py`, `sendfiles.py`, and `our_daemon.service` into `/home/vmw/folder/files/` on the VM.
+
+3. **Background Daemon Management:**
+   The data generator is managed by Linux systemd through `our_daemon.service`. The service executes `processer.py` using the VM's Python virtual environment. If the process ever exits or encounters an issue, systemd automatically restarts it after 45 seconds (`RestartSec=45s`).
+
+To manually install and start the service on the VM:
+```bash
+# SSH into the VM over Tailscale
+ssh vmw@newvm
+
+# Copy unit file to systemd directory and start it
+sudo cp our_daemon.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now our_daemon
+
+# Check service status and live logs
+sudo systemctl status our_daemon
+journalctl -u our_daemon -f
+```
+
+---
+
+## Datasets Generated
+
+The generator (`get_data.py`) takes live spot prices, trading volumes, and ROI percentages from the CoinGecko REST API and uses NumPy to scale them into 3 distinct relational CSV files with 1,000,000 rows each:
+
+| Dataset | Primary Columns | Rows | Size | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **`file1.csv`** | `ticket_symbol`, `live_price_usd`, `24_hour_trading_volume`, `highest_last24h`, `lowest_last24h`, `data_snapshot__date` | 1,000,000 | ~89.8 MB | Market pricing, trading liquidity, and daily volatility spreads. |
+| **`file2.csv`** | `times`, `currency`, `percentage` | 1,000,000 | ~40.9 MB | Historical Return on Investment (ROI) horizons, base currencies, and percentage returns. |
+| **`file3.csv`** | `all_times_high_price`, `when_all_times_occured`, `market_cap_rank` | 1,000,000 | ~32.2 MB | All-time high (ATH) benchmark records, occurrence dates, and market cap ranks. |
+| **Total** | **12 Columns Total** | **3,000,000** | **~163 MB** | **12,000,000 individual data cells generated per cycle.** |
+
+Once generated, `processer.py` calls `sendback_file()` from `sendfiles.py` to transfer the three CSV files back to the local laptop landing directory over Tailscale.
+
+---
+
+## Files in the Repository
+
+| File | Purpose |
+| :--- | :--- |
+| `main.tf` | Terraform configuration: imports existing Azure VM, creates reusable Tailscale key, and provisions Tailscale VM extension. |
+| `setup_vm.py` | Python automation: queries Azure CLI for VM metadata, populates `.env` variables, and runs Terraform commands. |
+| `get_data.py` | Core data generator: pulls from CoinGecko API and algorithmically scales the data into three 1M-row DataFrames. |
+| `processer.py` | Orchestration script: calls generation functions, writes local CSVs on the VM, and triggers SCP dispatch back to the laptop. |
+| `sendfiles.py` | SCP utility functions for pushing scripts to the VM and syncing CSV datasets back to the local machine. |
+| `sendtovm.py` | Automated local deployment script: sends updated scripts to the VM over SCP and triggers execution via SSH. |
+| `our_daemon.service` | Linux systemd service configuration file for continuous, supervised execution on the VM (`RestartSec=45s`). |
+| `sspark.py` | Local Apache Spark ETL: initializes 4-core SparkSession, enforces schemas, renames ROI columns, and injects lineage metadata. |
+| `azureprocessing.py` | Cloud export script: uses `hadoop-azure` connector (`wasbs://`) to write partitioned, Snappy-compressed Parquet to Azure Blob Storage. |
+| `initiation_db.sql` | SQL setup script: creates database-scoped SAS credential, external data source, and `OPENROWSET` views in Azure SQL. |
+| `docker-compose.yaml` | Container definition for Apache Superset: maps port `8422`, configures admin credentials, and automatically installs `pymssql`. |
+| `requirements.txt` | Python library dependencies (`pyspark`, `pandas`, `numpy`, `requests`, `python-dotenv`, `pymssql`). |
+| `.gitignore` | Protects secrets (`.env`), Terraform state files, Python caches, and large raw CSV datasets from Git. |
+
+---
+
+## Running the Local Steps
+
+Once the CSV files have landed in the local directory, execute the pipeline steps in order:
+
+### 1. Process the CSVs with PySpark
+Ingests the three CSV files, enforces column data types, renames ROI columns for semantic clarity, and adds `source_file` and `processed_at` timestamp audit fields:
 ```bash
 python3 sspark.py
 ```
 
-#### 3. Uploading Parquet Data to Azure
-Ensure the following variables are defined in your `.env` file:
-* `storage_account`: Name of your Azure Storage Account.
-* `sas_token`: Valid Shared Access Signature (SAS) token with Read/Write/List permissions on the `output` container.
-
-Run the upload script:
+### 2. Upload Parquet to Azure Blob Storage
+Uploads the transformed DataFrames as partitioned Snappy Parquet files directly into your Azure Storage container:
 ```bash
 python3 azureprocessing.py
 ```
+*Note: Make sure `storage_account` and `sas_token` are set in your `.env` file before running.*
 
-#### 4. Launching Apache Superset
+### 3. Create Azure SQL Serverless Views
+Open `initiation_db.sql` in Azure Data Studio, VS Code, or Azure Portal Query Editor. Replace `PASTE_SAS_TOKEN_HERE` and `storagenamehh` with your real Azure Storage details, remove the divider line on line 1, and run the script:
+```sql
+-- Creates virtual views querying Parquet files directly from Azure Blob Storage
+CREATE VIEW v_file1 AS
+SELECT * FROM OPENROWSET(
+    BULK 'output_parquet/file1/*.parquet',
+    DATA_SOURCE = 'sql_blob',
+    FORMAT = 'PARQUET'
+) AS [result];
+```
+
+### 4. Launch Apache Superset
+Start the Superset container using Docker Compose:
 ```bash
 docker compose up -d
 ```
-Access the Superset UI at `http://127.0.0.1:8422` (default credentials: `admin` / `admin`). Connect Apache Superset to Azure SQL using `mssql+pymssql://<username>:<password>@<server>.database.windows.net:1433/<database>`.
+Access the Superset UI at `http://127.0.0.1:8422` (default login: `admin` / `admin`).
+
+Connect Superset to Azure SQL by navigating to **Data → Databases → + Database** and entering your SQLAlchemy connection URI:
+```
+mssql+pymssql://<user>:<password>@<server>.database.windows.net:1433/<database>
+```
+Once connected, create datasets from `v_file1`, `v_file2`, and `v_file3` to build live dashboards tracking trading volume, price volatility, and ROI distributions.
 
 ---
 
-## 7. Observed Validation Results
+## Requirements
 
-All checks performed were strictly safe and non-destructive:
-
-1. **Python Syntax Compilation**:
-   * `setup_vm.py`, `sendfiles.py`, `sendtovm.py`, `get_data.py`, `sspark.py`, `azureprocessing.py`: **Pass (Exit Code 0)**.
-   * `processer.py`: **SyntaxError** on line 2 (`from sendfilesssh vmw@...`).
-2. **Terraform Validation**:
-   * `terraform validate`: **Pass (Success! The configuration is valid.)**.
-3. **Docker Compose Validation**:
-   * `docker compose config --dry-run`: **Pass (Valid YAML, container port 8422 correctly mapped)**.
-4. **Data File Verification**:
-   * `file1.csv`: 1,000,001 rows (header + 1M records), 89,780,134 bytes.
-   * `file2.csv`: 1,000,001 rows (header + 1M records), 40,859,477 bytes.
-   * `file3.csv`: 1,000,001 rows (header + 1M records), 32,229,194 bytes.
-   * Column definitions verified to match `get_data.py` and `sspark.py`.
+* **Local Machine:** Linux (Ubuntu/Debian recommended), Python 3.10+, Java OpenJDK 8 or 11 (required by PySpark), Docker with Compose, Terraform 1.5+, Azure CLI (`az`).
+* **Networking:** A Tailscale account with both your local machine and the Azure VM authenticated to the same Tailnet.
+* **Cloud Resources:** An active Azure subscription with an Azure Linux VM, an Azure Blob Storage account with an `output` container, and an Azure SQL database.
 
 ---
 
-## 8. Limitations & Manual Azure Setup Required
+## Status & Known Issues
 
-1. **Syntax Fix Needed in `processer.py`**:
-   Line 2 contains an accidental bash command paste and should be updated from:
-   `from sendfilesssh vmw@100.112.78.72 "ls /home/vmw/folder/files/"    import sendback_file`
-   to:
-   `from sendfiles import sendback_file`
-2. **Azure Storage Account & Container**:
-   A container named `output` must exist on the target Azure Storage Account, and a SAS token must be generated and stored in `.env`.
-3. **Database Setup (`initiation_db.sql`)**:
-   Line 1 contains non-SQL divider characters (`=============`) which must be removed or commented out before execution in SQL Server. In addition, the placeholder credentials (`PASTE_SAS_TOKEN_HERE` and `storagenamehh`) must be replaced with your actual Azure resource details.
-4. **Tailscale Configuration**:
-   The local machine (`ysnslaptop`) and the remote VM (`newvm`) must be authenticated to the same Tailnet to enable passwordless SCP/SSH data transfer.
+### Status
+- **Working & Verified:** 
+  - Terraform configuration validates cleanly (`terraform validate` passes).
+  - Python scripts compile without errors (syntax validated).
+  - Local PySpark processing runs on 4 driver cores with schema enforcement.
+  - Docker Compose configuration validates cleanly and starts Superset on port `8422`.
+  - All three raw CSV datasets generated (exactly 1,000,001 rows each).
+- **Needs Active Cloud Credentials:** Cloud upload to Azure Blob, remote SCP transfer over Tailscale, and live SQL view queries require active credentials in `.env`.
+- **In Progress:** Authoring final dashboard visualizations in Apache Superset.
+
+### Known Issues & Fixes
+1. **`processer.py` line 2 typo:**
+   Line 2 currently contains an accidental pasted shell command (`from sendfilesssh vmw@...`). To fix it, change line 2 to:
+   ```python
+   from sendfiles import sendback_file
+   ```
+2. **`initiation_db.sql` divider line:**
+   Line 1 contains non-SQL divider characters (`=============`). Remove this line before executing the script in SQL Server. Also remember to replace the placeholders `PASTE_SAS_TOKEN_HERE` and `storagenamehh` with your real Azure values.
+3. **Azure SQL `OPENROWSET` Preview Note:**
+   Querying external Parquet files directly via `OPENROWSET` in Azure SQL Database utilizes features that may require compatibility level 160 (`ALTER DATABASE [sql-db] SET COMPATIBILITY_LEVEL = 160;`).

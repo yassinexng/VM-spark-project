@@ -7,7 +7,6 @@
 *.tfstate
 *.tfstate.*
 *.tfstate.backup
-
 .terraform.lock.hcl
 
 # Python cache & build files
