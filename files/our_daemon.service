@@ -1,0 +1,13 @@
+[Unit]
+Description=Daemon for running python
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/vmw/folder/files
+ExecStart=/home/vmw/folder/files/venv/bin/python /home/vmw/folder/files/processer.py
+Restart=always
+RestartSec=45
+
+[Install]
+WantedBy=multi-user.target   

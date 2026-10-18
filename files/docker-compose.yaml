@@ -1,0 +1,39 @@
+services:
+  superset:
+    image: apache/superset:latest
+    user: "0"
+    container_name: superset
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8422:8088"
+    environment:
+      ADMIN_USERNAME: "admin"
+      ADMIN_FIRST_NAME: "Admin"
+      ADMIN_LAST_NAME: "User"
+      ADMIN_EMAIL: "admin@localhost"
+      ADMIN_PASSWORD: "admin"
+    volumes:
+      - superset-home:/app/superset_home
+    command:
+      - /bin/sh
+      - "-ec"
+      - |
+        if [ ! -s /app/superset_home/.secret_key ]; then
+          python -c 'import secrets; print(secrets.token_urlsafe(48))' > /app/superset_home/.secret_key
+        fi
+        export SUPERSET_SECRET_KEY="$(cat /app/superset_home/.secret_key)"
+        python -m ensurepip && python -m pip install pymssql
+        superset db upgrade
+        if ! superset fab list-users | grep -Fq "$$ADMIN_USERNAME"; then
+          superset fab create-admin \
+            --username "$$ADMIN_USERNAME" \
+            --firstname "$$ADMIN_FIRST_NAME" \
+            --lastname "$$ADMIN_LAST_NAME" \
+            --email "$$ADMIN_EMAIL" \
+            --password "$$ADMIN_PASSWORD"
+        fi
+        superset init
+        exec /app/docker/entrypoints/run-server.sh
+
+volumes:
+  superset-home:   
