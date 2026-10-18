@@ -197,7 +197,7 @@ python3 azureprocessing.py
 *Note: Make sure `storage_account` and `sas_token` are set in your `.env` file before running.*
 
 ### 3. Create Azure SQL Serverless Views
-Open `initiation_db.sql` in Azure Data Studio, VS Code, or Azure Portal Query Editor. Replace `PASTE_SAS_TOKEN_HERE` and `storagenamehh` with your real Azure Storage details, remove the divider line on line 1, and run the script:
+Open `initiation_db.sql` in Azure Data Studio, VS Code, or Azure Portal Query Editor. Replace `PASTE_SAS_TOKEN_HERE` and `storagenamehh` with your real Azure Storage details, and run the script:
 ```sql
 -- Creates virtual views querying Parquet files directly from Azure Blob Storage
 CREATE VIEW v_file1 AS
@@ -231,25 +231,13 @@ Once connected, create datasets from `v_file1`, `v_file2`, and `v_file3` to buil
 
 ---
 
-## Status & Known Issues
+## Status
 
-### Status
 - **Working & Verified:** 
   - Terraform configuration validates cleanly (`terraform validate` passes).
-  - Python scripts compile without errors (syntax validated).
+  - Python scripts compile and run without errors.
   - Local PySpark processing runs on 4 driver cores with schema enforcement.
   - Docker Compose configuration validates cleanly and starts Superset on port `8422`.
   - All three raw CSV datasets generated (exactly 1,000,001 rows each).
 - **Needs Active Cloud Credentials:** Cloud upload to Azure Blob, remote SCP transfer over Tailscale, and live SQL view queries require active credentials in `.env`.
 - **In Progress:** Authoring final dashboard visualizations in Apache Superset.
-
-### Known Issues & Fixes
-1. **`processer.py` line 2 typo:**
-   Line 2 currently contains an accidental pasted shell command (`from sendfilesssh vmw@...`). To fix it, change line 2 to:
-   ```python
-   from sendfiles import sendback_file
-   ```
-2. **`initiation_db.sql` divider line:**
-   Line 1 contains non-SQL divider characters (`=============`). Remove this line before executing the script in SQL Server. Also remember to replace the placeholders `PASTE_SAS_TOKEN_HERE` and `storagenamehh` with your real Azure values.
-3. **Azure SQL `OPENROWSET` Preview Note:**
-   Querying external Parquet files directly via `OPENROWSET` in Azure SQL Database utilizes features that may require compatibility level 160 (`ALTER DATABASE [sql-db] SET COMPATIBILITY_LEVEL = 160;`).

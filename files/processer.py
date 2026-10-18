@@ -1,5 +1,5 @@
 from get_data import generate_more
-from sendfilesssh vmw@100.112.78.72 "ls /home/vmw/folder/files/"    import sendback_file
+from sendfiles import sendback_file
 
 
 def tocsv(df, i):

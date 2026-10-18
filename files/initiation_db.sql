@@ -1,5 +1,3 @@
-=============
-
 -- run once:
 ALTER DATABASE [sql-db] SET COMPATIBILITY_LEVEL = 160;
 
